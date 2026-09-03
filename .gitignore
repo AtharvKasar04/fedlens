@@ -10,3 +10,9 @@ wheels/
 .venv
 .env
 .DS_Store
+
+# Logs
+logs/
+*.log
+*.sqlite
+*.db

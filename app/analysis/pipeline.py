@@ -1,3 +1,19 @@
+"""
+Core Analysis Orchestrator
+
+This module coordinates the complete lifecycle of FOMC document processing. It sequentially executes data retrieval, machine learning extraction, and divergence detection to form a comprehensive policy analysis.
+
+Execution Flow:
+1. Ingestion: Invokes `FedScraper` to acquire the raw text of FOMC press releases.
+2. Persistence: Commits the raw document metadata to the PostgreSQL database.
+3. LLM Extraction: Prompts the LLM (via `FedLensLLM`) to perform a structured grading of the economy (improving, deteriorating, stable) based purely on the text.
+4. Temporal Comparison: Computes text diffs against the prior meeting and generates an interpretation of the hawkish or dovish shifts.
+5. Auditing: Triggers the `DivergenceDetector` to compare the Fed's claims against real-world economic data.
+
+Configuration Parameters:
+- Execution Order: Controlled by the `process_meeting` method.
+- Prompt Engineering: The instructions provided to the LLM for structured extraction are defined within the `prompt` variables throughout the pipeline.
+"""
 import logging
 import json
 from datetime import datetime
@@ -5,11 +21,13 @@ from pydantic import BaseModel, Field
 
 from app.ingestion.fed_scraper import FedScraper
 from app.analysis.llm_client import FedLensLLM
+from app.analysis.differ import compute_text_diff
+from app.analysis.divergence import DivergenceDetector
 from app.db.session import SessionLocal
-from app.db.models import FOMCMeeting, FOMCDocument, PolicyAssessment
+from app.db.models import FOMCMeeting, FOMCDocument, PolicyAssessment, MeetingComparison
+from app.core.logger import setup_logger
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 # Define the full Pydantic schema for the LLM to extract
 class AssessmentDimension(BaseModel):
@@ -20,12 +38,20 @@ class FullPolicyAssessment(BaseModel):
     inflation: AssessmentDimension
     labor_market: AssessmentDimension
     economic_growth: AssessmentDimension
+    financial_conditions: AssessmentDimension
+    forward_guidance: AssessmentDimension
     overall_stance: AssessmentDimension
+
+class ChangeInterpretation(BaseModel):
+    summary_of_changes: str = Field(description="A 1-2 sentence summary of what changed.")
+    hawkish_or_dovish: str = Field(description="Did the changes make the statement more 'hawkish', 'dovish', or 'neutral'?")
+    key_takeaway: str = Field(description="Why these specific word changes matter to the market.")
 
 class AnalysisPipeline:
     def __init__(self):
         self.scraper = FedScraper()
         self.llm = FedLensLLM()
+        self.divergence_detector = DivergenceDetector()
         
     def process_meeting(self, date_str: str):
         """Processes a single meeting: Scrape -> DB -> LLM Extract -> DB"""
@@ -76,48 +102,114 @@ class AnalysisPipeline:
             existing_assessment = db.query(PolicyAssessment).filter(PolicyAssessment.meeting_id == meeting.id).first()
             if existing_assessment:
                 logger.info("Assessment already exists in DB. Skipping LLM call.")
-                return
+            else:
+                logger.info("Sending statement to LLM for grading...")
+                prompt = f"""
+                You are an expert Federal Reserve policy analyst.
+                Read the following FOMC statement and extract the policy assessments.
                 
-            logger.info("Sending statement to LLM for grading...")
-            prompt = f"""
-            You are an expert Federal Reserve policy analyst.
-            Read the following FOMC statement and extract the policy assessments.
+                STATEMENT TEXT:
+                {statement_text}
+                """
+                
+                response = self.llm.client.chat.completions.create(
+                    model=self.llm.model,
+                    response_model=FullPolicyAssessment,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                
+                logger.debug("Received response from LLM for policy assessment.", extra={"extra_data": {"response": response.model_dump()}})
+                
+                # 5. Save the Assessment to the Database
+                assessment = PolicyAssessment(
+                    meeting_id=meeting.id,
+                    document_id=doc.id,
+                    inflation_assessment=response.inflation.model_dump(),
+                    labor_assessment=response.labor_market.model_dump(),
+                    growth_assessment=response.economic_growth.model_dump(),
+                    financial_conditions=response.financial_conditions.model_dump(),
+                    forward_guidance=response.forward_guidance.model_dump(),
+                    overall_stance=response.overall_stance.model_dump(),
+                    raw_llm_output=response.model_dump(),
+                    extraction_model=self.llm.model
+                )
+                
+                db.add(assessment)
+                db.commit()
+                logger.info("Successfully saved LLM assessment to DB!")
             
-            STATEMENT TEXT:
-            {statement_text}
-            """
+            # 6. Change Detection (Diff against previous meeting)
+            previous_meeting = db.query(FOMCMeeting).filter(
+                FOMCMeeting.meeting_date < meeting.meeting_date
+            ).order_by(FOMCMeeting.meeting_date.desc()).first()
             
-            response = self.llm.client.chat.completions.create(
-                model=self.llm.model,
-                response_model=FullPolicyAssessment,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
-            # 5. Save the Assessment to the Database
-            assessment = PolicyAssessment(
-                meeting_id=meeting.id,
-                document_id=doc.id,
-                inflation_assessment=response.inflation.model_dump(),
-                labor_assessment=response.labor_market.model_dump(),
-                growth_assessment=response.economic_growth.model_dump(),
-                overall_stance=response.overall_stance.model_dump(),
-                raw_llm_output=response.model_dump(),
-                extraction_model=self.llm.model
-            )
-            
-            db.add(assessment)
-            db.commit()
-            logger.info("Successfully saved LLM assessment to DB!")
+            if previous_meeting:
+                logger.info(f"Found previous meeting ({previous_meeting.meeting_date}). Computing diff...")
+                prev_doc = db.query(FOMCDocument).filter(
+                    FOMCDocument.meeting_id == previous_meeting.id,
+                    FOMCDocument.doc_type == "statement"
+                ).first()
+                
+                if prev_doc:
+                    # Check if we already compared them
+                    existing_comp = db.query(MeetingComparison).filter(
+                        MeetingComparison.base_meeting_id == previous_meeting.id,
+                        MeetingComparison.comp_meeting_id == meeting.id
+                    ).first()
+                    
+                    if not existing_comp:
+                        diff_text = compute_text_diff(prev_doc.raw_text, statement_text)
+                        
+                        logger.info("Asking LLM to interpret the changes...")
+                        diff_prompt = f"""
+                        You are an expert Federal Reserve policy analyst.
+                        I am providing you with a redline diff between the previous FOMC statement and the new one.
+                        [ADDED] means new words the Fed inserted.
+                        [DELETED] means words the Fed removed.
+                        
+                        DIFF TEXT:
+                        {diff_text}
+                        
+                        Interpret what these specific changes mean for monetary policy.
+                        """
+                        
+                        diff_response = self.llm.client.chat.completions.create(
+                            model=self.llm.model,
+                            response_model=ChangeInterpretation,
+                            messages=[{"role": "user", "content": diff_prompt}]
+                        )
+                        
+                        logger.debug("Received diff interpretation from LLM.", extra={"extra_data": {"diff_response": diff_response.model_dump()}})
+                        
+                        comparison = MeetingComparison(
+                            base_meeting_id=previous_meeting.id,
+                            comp_meeting_id=meeting.id,
+                            text_diff={"raw_diff": diff_text},
+                            llm_interpretation=diff_response.model_dump_json()
+                        )
+                        
+                        db.add(comparison)
+                        db.commit()
+                        logger.info("Successfully saved Change Interpretation to DB!")
             
         except Exception as e:
             logger.error(f"Error processing meeting {date_str}: {e}")
             db.rollback()
         finally:
             db.close()
+            
+        # 7. Divergence Detection (runs in its own session inside check_meeting_divergence)
+        logger.info(f"Running Divergence Detection for {date_str}...")
+        self.divergence_detector.check_meeting_divergence(date_str)
 
 if __name__ == "__main__":
     pipeline = AnalysisPipeline()
-    # Let's test it on the most recent meeting: September 18, 2024
-    print("\n--- RUNNING PIPELINE ON SEPT 2024 MEETING ---\n")
-    pipeline.process_meeting("20240918")
+    dates = pipeline.scraper.get_recent_meeting_dates()
+    
+    # Process from oldest to newest so diffs work correctly
+    # The dates list from the scraper is newest first, so we reverse it.
+    for date in reversed(dates):
+        print(f"\n--- RUNNING PIPELINE ON MEETING ({date}) ---")
+        pipeline.process_meeting(date)
+    
     print("\nPipeline finished.")

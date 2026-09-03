@@ -1,12 +1,24 @@
 import logging
 from bs4 import BeautifulSoup
+"""
+Federal Reserve Web Scraping Client
+
+This module handles the direct acquisition of primary source documents from the Federal Reserve's official website. It targets specific press release URLs and isolates the monetary policy text from the surrounding HTML structure.
+
+Key Operations:
+1. HTTP Requests: Connects to `federalreserve.gov` to download the raw HTML of FOMC communications.
+2. DOM Parsing: Utilizes BeautifulSoup to navigate the Document Object Model, targeting specific `div` containers to extract only the relevant statement text while stripping away headers, footers, and stylistic elements.
+
+Configuration Parameters:
+- DOM Selectors: The CSS selectors and HTML tags used to isolate the text are defined in `get_statement`. These must be updated if the Federal Reserve redesigns their web architecture.
+"""
 import requests
 from typing import List, Dict, Optional
 import datetime
 import re
+from app.core.logger import setup_logger
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 class FedScraper:
     def __init__(self):
@@ -85,20 +97,24 @@ class FedScraper:
         Fetch the calendar page and parse out the most recent meeting dates.
         Returns a list of date strings in YYYYMMDD format.
         """
-        # Hardcoding the last 10 meetings for 2024-2023 for MVP reliability
-        # In a full production system, we would parse the calendar page dynamically.
-        # Format is YYYYMMDD. For two-day meetings, this is the SECOND day.
+        # Using the last 16 meetings (Exactly 2 years: Sept 2024 - Sept 2026)
         dates = [
-            "20240918",
-            "20240731",
-            "20240612",
-            "20240501",
-            "20240320",
-            "20240131",
-            "20231213",
-            "20231101",
-            "20230920",
-            "20230726"
+            "20260729",
+            "20260617",
+            "20260429",
+            "20260318",
+            "20260128",
+            "20251210",
+            "20251029",
+            "20250917",
+            "20250730",
+            "20250618",
+            "20250507",
+            "20250319",
+            "20250129",
+            "20241218",
+            "20241107",
+            "20240918"
         ]
         return dates
 

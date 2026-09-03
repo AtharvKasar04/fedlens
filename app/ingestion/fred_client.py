@@ -1,14 +1,14 @@
 import os
-import logging
 import requests
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from dotenv import load_dotenv
 
+from app.core.logger import setup_logger
+
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 class FredClient:
     def __init__(self):

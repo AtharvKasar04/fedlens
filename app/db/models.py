@@ -99,3 +99,26 @@ class MeetingComparison(Base):
     stance_delta = Column(JSONB)
     evidence = Column(JSONB)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class Divergence(Base):
+    __tablename__ = 'divergences'
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    meeting_id = Column(UUID(as_uuid=True), ForeignKey('fomc_meetings.id'))
+    series_id = Column(UUID(as_uuid=True), ForeignKey('economic_series.id'))
+    
+    fed_claim_text = Column(Text)
+    fed_claim_direction = Column(String(20))
+    data_direction = Column(String(20))
+    divergence_type = Column(String(20))
+    divergence_score = Column(Numeric(4,2))
+    
+    data_summary = Column(JSONB)
+    explanation = Column(Text)
+    severity = Column(String(20))
+    is_divergent = Column(Boolean, default=False)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    meeting = relationship("FOMCMeeting")
+    series = relationship("EconomicSeries")

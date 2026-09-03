@@ -1,20 +1,35 @@
+"""
+Large Language Model (LLM) Integration Client
+
+This module provides the primary interface for communicating with OpenAI's API. It leverages the `instructor` library to enforce strict schema validation on the LLM's output, ensuring that the model responds with well-structured JSON data (defined by Pydantic models) rather than unstructured text. This structural guarantee is critical for downstream database insertion and algorithmic processing.
+
+Configuration Parameters:
+- Model Selection: Driven by the `LLM_MODEL` environment variable (default: `gpt-4o-mini`).
+- Provider: Configured for OpenAI by default, but the `instructor` wrapper can be adapted for Anthropic or other SDKs if required.
+"""
 import os
-import logging
 import instructor
 from openai import OpenAI
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+from app.core.logger import setup_logger
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 class AssessmentGrade(BaseModel):
+    """
+    This class defines the exact shape of the data we want from the AI. 
+    The AI will literally read the 'description' fields below to understand what it needs to extract.
+    """
     grade: str = Field(description="Must be 'improving', 'deteriorating', or 'stable'")
     evidence: str = Field(description="Exact quote from the text justifying the grade")
 
 class FedLensLLM:
+    """
+    The main AI wrapper. We use this throughout the app whenever we need to 'think' or extract data.
+    """
     def __init__(self):
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key or "paste_your" in api_key:
