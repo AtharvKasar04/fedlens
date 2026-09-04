@@ -55,6 +55,11 @@ class HybridRetriever:
             model="text-embedding-3-small",
             input=[query],
         )
+        
+        from app.core.token_logger import log_token_usage
+        if hasattr(response, "usage"):
+            log_token_usage("vector_search_embedder", response.usage, "text-embedding-3-small")
+            
         return response.data[0].embedding
 
     def bm25_search(

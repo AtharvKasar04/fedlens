@@ -7,7 +7,7 @@ from typing import Optional
 import uvicorn
 
 from app.db.session import SessionLocal
-from app.db.models import FOMCMeeting, PolicyAssessment, MeetingComparison
+from app.db.models import FOMCMeeting, PolicyAssessment, MeetingComparison, MarketReaction
 from app.core.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -96,6 +96,19 @@ def get_meeting_detail(date_str: str, db: Session = Depends(get_db)):
             response_data["change_detection"]["text_diff"] = comparison.text_diff
     else:
         response_data["change_detection"] = None
+
+    market_reaction = db.query(MarketReaction).filter(
+        MarketReaction.meeting_id == meeting.id
+    ).first()
+    
+    if market_reaction:
+        response_data["market_reaction"] = {
+            "spy_change_pct": float(market_reaction.spy_change_pct),
+            "tlt_change_pct": float(market_reaction.tlt_change_pct),
+            "ai_explanation": market_reaction.ai_explanation
+        }
+    else:
+        response_data["market_reaction"] = None
 
     return response_data
 

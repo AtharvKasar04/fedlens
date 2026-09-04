@@ -23,6 +23,7 @@ from app.ingestion.fed_scraper import FedScraper
 from app.analysis.llm_client import FedLensLLM
 from app.analysis.differ import compute_text_diff
 from app.analysis.divergence import DivergenceDetector
+from app.analysis.market import MarketReactionEngine
 from app.db.session import SessionLocal
 from app.db.models import FOMCMeeting, FOMCDocument, PolicyAssessment, MeetingComparison
 from app.core.logger import setup_logger
@@ -108,6 +109,9 @@ class AnalysisPipeline:
                 You are an expert Federal Reserve policy analyst.
                 Read the following FOMC statement and extract the policy assessments.
                 
+                CRITICAL INSTRUCTION FOR NUMBERS: 
+                If the statement uses fractional interest rates (e.g., "4-1/4", "4-1/2", "4-3/4"), you MUST convert them to standard decimals (e.g., 4.25%, 4.50%, 4.75%) in your response.
+                
                 STATEMENT TEXT:
                 {statement_text}
                 """
@@ -117,6 +121,10 @@ class AnalysisPipeline:
                     response_model=FullPolicyAssessment,
                     messages=[{"role": "user", "content": prompt}]
                 )
+                
+                from app.core.token_logger import log_token_usage
+                if hasattr(response, "_raw_response") and hasattr(response._raw_response, "usage"):
+                    log_token_usage("pipeline_policy_assessment", response._raw_response.usage, self.llm.model)
                 
                 logger.debug("Received response from LLM for policy assessment.", extra={"extra_data": {"response": response.model_dump()}})
                 
@@ -167,6 +175,9 @@ class AnalysisPipeline:
                         [ADDED] means new words the Fed inserted.
                         [DELETED] means words the Fed removed.
                         
+                        CRITICAL INSTRUCTION FOR NUMBERS: 
+                        If the text uses fractional interest rates (e.g., "4-1/4", "4-1/2", "4-3/4"), you MUST convert them to standard decimals (e.g., 4.25%, 4.50%, 4.75%) in your response.
+                        
                         DIFF TEXT:
                         {diff_text}
                         
@@ -179,6 +190,9 @@ class AnalysisPipeline:
                             messages=[{"role": "user", "content": diff_prompt}]
                         )
                         
+                        if hasattr(diff_response, "_raw_response") and hasattr(diff_response._raw_response, "usage"):
+                            log_token_usage("pipeline_diff_interpretation", diff_response._raw_response.usage, self.llm.model)
+                        
                         logger.debug("Received diff interpretation from LLM.", extra={"extra_data": {"diff_response": diff_response.model_dump()}})
                         
                         comparison = MeetingComparison(
@@ -190,7 +204,31 @@ class AnalysisPipeline:
                         
                         db.add(comparison)
                         db.commit()
-                        logger.info("Successfully saved Change Interpretation to DB!")
+                        logger.info("Saved meeting comparison diff to DB.")
+                        
+                    else:
+                        logger.info("Meeting comparison already exists. Skipping diff.")
+                        
+                    # Market Reaction Engine
+                    market_engine = MarketReactionEngine(llm_client=self.llm)
+                    logger.info("Triggering Market Reaction Engine...")
+                    
+                    # Ensure we have diff summary even if existing
+                    diff_summary = ""
+                    if not existing_comp:
+                        diff_summary = diff_response.summary_of_changes
+                    else:
+                        import json
+                        try:
+                            interp = json.loads(existing_comp.llm_interpretation)
+                            diff_summary = interp.get("summary_of_changes", "")
+                        except:
+                            diff_summary = existing_comp.llm_interpretation
+                            
+                    market_engine.process_meeting(meeting.id, meeting.meeting_date, diff_summary, db)
+                    
+                else:
+                    logger.info("Previous document not found, skipping diff.")
             
         except Exception as e:
             logger.error(f"Error processing meeting {date_str}: {e}")

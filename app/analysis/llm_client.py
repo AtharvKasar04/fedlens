@@ -61,6 +61,10 @@ class FedLensLLM:
             ]
         )
         
+        from app.core.token_logger import log_token_usage
+        if hasattr(response, "_raw_response") and hasattr(response._raw_response, "usage"):
+            log_token_usage("test_extraction", response._raw_response.usage, self.model)
+        
         return response
 
 if __name__ == "__main__":

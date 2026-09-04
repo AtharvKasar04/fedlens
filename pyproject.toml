@@ -20,4 +20,5 @@ dependencies = [
     "sentence-transformers>=6.0.1",
     "sqlalchemy>=2.0.52",
     "uvicorn>=0.52.4",
+    "yfinance>=1.7.0",
 ]

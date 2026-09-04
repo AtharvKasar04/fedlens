@@ -122,3 +122,17 @@ class Divergence(Base):
     
     meeting = relationship("FOMCMeeting")
     series = relationship("EconomicSeries")
+
+class MarketReaction(Base):
+    __tablename__ = 'market_reactions'
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    meeting_id = Column(UUID(as_uuid=True), ForeignKey('fomc_meetings.id'), unique=True)
+    
+    spy_change_pct = Column(Numeric(5,2))
+    tlt_change_pct = Column(Numeric(5,2))
+    ai_explanation = Column(Text)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    meeting = relationship("FOMCMeeting")

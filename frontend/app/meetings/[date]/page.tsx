@@ -35,6 +35,12 @@ const DIMENSION_LABELS: Record<string, string> = {
   forward_guidance: "Forward Guidance",
 };
 
+interface MarketReaction {
+  spy_change_pct: number;
+  tlt_change_pct: number;
+  ai_explanation: string;
+}
+
 export default async function MeetingDetailPage({
   params,
 }: {
@@ -52,6 +58,7 @@ export default async function MeetingDetailPage({
 
   const assessment = detail?.assessment;
   const changeDetection = detail?.change_detection;
+  const marketReaction = detail?.market_reaction as MarketReaction | undefined;
   const stance = assessment?.overall_stance;
 
   const dimensions = assessment
@@ -234,6 +241,62 @@ export default async function MeetingDetailPage({
               )}
             </div>
           </div>
+
+          {/* Market Reaction */}
+          {marketReaction && (
+            <div className="grid-2" style={{ marginBottom: "var(--sp-8)", alignItems: "stretch" }}>
+              <div className="card" style={{ height: "100%" }}>
+                <div className="card-header">
+                  <div className="card-title">Wall Street Reaction (Day-over-Day)</div>
+                  <div style={{ display: "flex", gap: "var(--sp-2)" }}>
+                    <span
+                      className={`badge`}
+                      style={{ 
+                        backgroundColor: marketReaction.spy_change_pct >= 0 ? 'var(--green-bg)' : 'var(--red-bg)',
+                        color: marketReaction.spy_change_pct >= 0 ? 'var(--green-fg)' : 'var(--red-fg)'
+                      }}
+                    >
+                      SPY: {marketReaction.spy_change_pct > 0 ? "+" : ""}{marketReaction.spy_change_pct.toFixed(2)}%
+                    </span>
+                    <span
+                      className={`badge`}
+                      style={{ 
+                        backgroundColor: marketReaction.tlt_change_pct >= 0 ? 'var(--green-bg)' : 'var(--red-bg)',
+                        color: marketReaction.tlt_change_pct >= 0 ? 'var(--green-fg)' : 'var(--red-fg)'
+                      }}
+                    >
+                      TLT: {marketReaction.tlt_change_pct > 0 ? "+" : ""}{marketReaction.tlt_change_pct.toFixed(2)}%
+                    </span>
+                  </div>
+                </div>
+                
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "#555",
+                    lineHeight: 1.75,
+                    borderTop: "1px solid var(--border)",
+                    paddingTop: "var(--sp-4)",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      letterSpacing: "0.1em",
+                      textTransform: "uppercase",
+                      color: "#333",
+                      display: "block",
+                      marginBottom: 6,
+                    }}
+                  >
+                    AI Interpretation
+                  </span>
+                  {marketReaction.ai_explanation}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Policy Dimensions */}
           <div className="section-header">
